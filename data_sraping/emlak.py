@@ -1,23 +1,20 @@
 import csv
 import time
-import random
 import os
 import re
 from playwright.sync_api import sync_playwright
 from bs4 import BeautifulSoup
 
-#dosya ismini güncel tutuyoruz sizdeki isim neyse onu yazıyoruz
 SU_ANKI_KLASOR = os.path.dirname(os.path.abspath(__file__))
-CSV_FILE_PATH = os.path.join(SU_ANKI_KLASOR, "ankara_emlak_FINAL_FULL_KONUM_2.csv")
+CSV_FILE_PATH = os.path.join(SU_ANKI_KLASOR, "ankara_emlak_FINAL_FULL_KONUM_3.csv")
 
 def save_to_csv(data_list):
     fields = [
-        'ilan_no', 'baslik', 'fiyat', 'konut_tipi', 'oda_sayisi', 'm2', 
-        'bulundugu_kat', 'bina_yasi', 'isinma_tipi', 'tapu_durumu', 
-        'banyo_sayisi', 'kat_sayisi', 'krediye_uygun', 'esya_durumu', 
-        'firma_adi', 'ilan_tarihi', 'konum', 'url'
+        'ilan_no', 'kategori', 'fiyat', 'oda_sayisi', 'm2',
+        'bulundugu_kat', 'bina_yasi', 'isinma_tipi', 'tapu_durumu',
+        'banyo_sayisi', 'kat_sayisi', 'krediye_uygun', 'esya_durumu',
+        'firma_adi', 'ilan_tarihi', 'ilce', 'mahalle', 'url'
     ]
-    
     file_exists = os.path.isfile(CSV_FILE_PATH)
     with open(CSV_FILE_PATH, mode='a', newline='', encoding='utf-8-sig') as file:
         writer = csv.DictWriter(file, fieldnames=fields, delimiter=';')
@@ -26,73 +23,70 @@ def save_to_csv(data_list):
         writer.writerows(data_list)
         file.flush()
 
+def parse_detay_tablosu(soup):
+    """
+    Detay sayfasındaki table > tr satırlarını {etiket: deger} sözlüğüne çevirir.
+    Örnek: {'İlan no': '9228-43', 'Kat Sayısı': '4', 'Son Güncelleme': '11/05/2026', ...}
+    """
+    tablo = {}
+    for row in soup.select('table tr'):
+        cells = row.find_all(['td', 'th'])
+        if len(cells) >= 2:
+            key = cells[0].get_text(strip=True)
+            val = cells[1].get_text(strip=True)
+            if key:
+                tablo[key] = val
+    return tablo
+
 def get_detay_verileri(context, url):
-    """
-    İlan detayına girer:
-    1. Kat Sayısı
-    2. İlan Tarihi
-    3. Detaylı Konum (İl/İlçe/Mahalle) bilgilerini çeker.
-    """
-    result = {'kat_sayisi': '-', 'ilan_tarihi': '-', 'konum': '-'}
+    result = {
+        'kat_sayisi': '-', 'ilan_tarihi': '-',
+        'ilce': '-', 'mahalle': '-',
+        'ilan_no_detay': '-'
+    }
     new_page = None
     try:
         new_page = context.new_page()
         new_page.goto(url, wait_until="domcontentloaded", timeout=60000)
-        
-        #sayfanın yüklenmesini bekle
         try:
-            new_page.wait_for_selector(".spec-item", timeout=5000)
+            new_page.wait_for_selector('table', timeout=6000)
         except:
-            pass 
-        
-        #isteğe bağlı bekleme süresi mevcut ayarı 5 sn
-        time.sleep(8) 
+            pass
+        time.sleep(8)
 
-        content = new_page.content()
-        soup = BeautifulSoup(content, 'html.parser')
+        soup = BeautifulSoup(new_page.content(), 'html.parser')
+        tablo = parse_detay_tablosu(soup)
 
-        #1. KAT SAYISI ayrıntılı şekilde verdik çünkü bazı ilanlarda farklı yerlerde olabiliyor
-        kat_sayisi = "-"
-        value_txts = soup.find_all('span', class_='value-txt')
-        for span in value_txts:
-            txt = span.get_text(strip=True)
-            if "Katlı" in txt:
-                kat_sayisi = txt.replace("Katlı", "").strip()
-                break
-        
-        if kat_sayisi == "-":
-            specs = soup.find_all('li', class_='spec-item')
-            for item in specs:
-                if "Kat Sayısı" in item.get_text():
-                    val_span = item.find_all('span')[-1]
-                    kat_sayisi = val_span.get_text(strip=True).replace("Katlı", "").strip()
-                    break
-        result['kat_sayisi'] = kat_sayisi
+        # İLAN NO (yedek — liste sayfasındaki article id'si yoksa kullanılır)
+        result['ilan_no_detay'] = tablo.get('İlan no', '-')
 
-        # İLAN TARİHİ: Genellikle <time datetime="2024-05-01">1 Mayıs 2024</time> şeklinde olur, ama bazen metin içinde de olabilir
+        # KAT SAYISI
+        result['kat_sayisi'] = tablo.get('Kat Sayısı', tablo.get('Toplam Kat', '-'))
+
+        # İLAN TARİHİ — <time datetime="2026/05/11"> etiketinden
         time_tag = soup.find('time', attrs={'datetime': True})
         if time_tag:
             result['ilan_tarihi'] = time_tag['datetime']
         else:
-            date_match = re.search(r'(\d{4}-\d{2}-\d{2})|(\d{2}-\d{2}-\d{4})', soup.get_text())
-            if date_match:
-                result['ilan_tarihi'] = date_match.group(0)
+            # Yedek: tablodaki "Son Güncelleme" değeri
+            result['ilan_tarihi'] = tablo.get('Son Güncelleme', tablo.get('İlan Tarihi', '-'))
 
-        # DETAYLI KONUM (İl/İlçe/Mahalle): Genellikle .detail-info-location sınıfında olur, içinde div'ler olabilir
-        
-        addr_tag = soup.select_one('.detail-info-location')
-        if addr_tag:
-            # İçindeki div'leri topla: ["Ankara", "Etimesgut", "Ahi Mesut Mah."]
-            loc_parts = [div.get_text(strip=True) for div in addr_tag.find_all('div')]
-            # Birleştir: "Ankara / Etimesgut / Ahi Mesut Mah."
-            result['konum'] = " / ".join([p for p in loc_parts if p])
+        # KONUM — .detail-info-location içindeki div'ler
+        addr = soup.select_one('.detail-info-location')
+        if addr:
+            parts = [d.get_text(strip=True) for d in addr.find_all('div') if d.get_text(strip=True)]
+            # parts[0]=Ankara, parts[1]=İlçe, parts[2]=Mahalle
+            if len(parts) >= 2:
+                result['ilce'] = parts[1]
+            if len(parts) >= 3:
+                result['mahalle'] = parts[2]
 
     except Exception as e:
-        print(f"    [Detay Hatası] Veri çekilemedi: {e}")
+        print(f"    [Detay Hatası] {e}")
     finally:
         if new_page:
             new_page.close()
-    
+
     return result
 
 def main():
@@ -101,93 +95,123 @@ def main():
             browser = p.chromium.connect_over_cdp("http://localhost:9222")
             context = browser.contexts[0]
             page = context.pages[0]
-            print(f"Bağlantı kuruldu. Veriler şuraya kaydedilecek: {CSV_FILE_PATH}")
+            print(f"Bağlantı kuruldu. Çıktı: {CSV_FILE_PATH}")
         except:
             print("HATA: Chrome portu (9222) açık değil!")
             return
 
-        for page_num in range(297, 750): 
-            target_url = f"https://www.hepsiemlak.com/ankara-satilik?page={page_num}"
-            print(f"\n>>> Sayfa {page_num} işleniyor...")
-            
+        for page_num in range(1, 300):
+            target_url = f"https://www.hepsiemlak.com/ankara-kiralik?page={page_num}"
+
+            if 'kiralik' in target_url:
+                kategori = "Kiralık"
+            elif 'satilik' in target_url:
+                kategori = "Satılık"
+            else:
+                kategori = "-"
+
+            print(f"\n>>> Sayfa {page_num} işleniyor... [{kategori}]")
+
             try:
                 page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
                 time.sleep(5)
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                 time.sleep(5)
-                
+
                 soup = BeautifulSoup(page.content(), 'html.parser')
                 listings = soup.select('.listing-item')
-                
                 print(f"    Bu sayfada {len(listings)} ilan bulundu.")
 
                 final_data = []
                 for index, listing in enumerate(listings):
                     try:
-                        # Temel Link ve ID
-                        link_tag = listing.select_one('a.card-link')
-                        url = "https://www.hepsiemlak.com" + link_tag['href'] if link_tag else "-"
-                        ilan_no = url.split('/')[-1] if '/' in url else "-"
-                        
-                        # Fiyat
-                        fiyat_ham = listing.select_one('.list-view-price').get_text(strip=True) if listing.select_one('.list-view-price') else "0"
-                        fiyat = fiyat_ham.replace("TL", "").replace(".", "").strip()
-
-                        # Liste sayfasından yedek veriler
-                        oda = listing.select_one('.houseRoomCount').get_text(strip=True).replace("\n", "").strip() if listing.select_one('.houseRoomCount') else "-"
-                        m2 = listing.select_one('.squareMeter').get_text(strip=True).replace("m²", "").strip() if listing.select_one('.squareMeter') else "-"
-                        yas = listing.select_one('.buildingAge').get_text(strip=True).replace(" Yaşında", "").strip() if listing.select_one('.buildingAge') else "-"
-                        bulundugu_kat = listing.select_one('.floortype').get_text(strip=True) if listing.select_one('.floortype') else "-"
-                        firma = listing.select_one('.listing-card--owner-info__firm-name').get_text(strip=True) if listing.select_one('.listing-card--owner-info__firm-name') else "-"
-                        konut_tipi = listing.select_one('.left').get_text(strip=True) if listing.select_one('.left') else "Daire"
-                        
-                        # Liste sayfasındaki konum (Yedek olarak tutuyoruz)
-                        konum_liste = listing.select_one('address').get_text(strip=True) if listing.select_one('address') else "-"
-
-                        # DETAY SAYFASINA GİDİŞ VE ORADAN VERİ ÇEKME ---
-                        detay_verileri = {'kat_sayisi': '-', 'ilan_tarihi': '-', 'konum': '-'}
-                        
-                        if url != "-":
-                            detay_verileri = get_detay_verileri(context, url)
-                            
-                            # Eğer detaydan konum geldiyse onu kullan, gelmediyse listedekini kullan
-                            final_konum = detay_verileri['konum'] if detay_verileri['konum'] != '-' else konum_liste
-                            
-                            print(f"    [{index+1}/{len(listings)}] {ilan_no} | Kat:{detay_verileri['kat_sayisi']} | Tarih:{detay_verileri['ilan_tarihi']} | Yer:{final_konum}")
+                        # URL — doğru selector: a.listingView__card-link
+                        link = listing.select_one('a.listingView__card-link')
+                        if link and link.get('href'):
+                            href = link['href']
+                            url = href if href.startswith('http') else "https://www.hepsiemlak.com" + href
                         else:
-                            final_konum = konum_liste
+                            url = "-"
+
+                        # İLAN NO — article etiketinin id attribute'u (örn: "9228-43")
+                        article = listing.find('article')
+                        ilan_no = article.get('id', '-') if article else "-"
+
+                        # FIYAT
+                        fiyat_el = listing.select_one('.list-view-price')
+                        fiyat = fiyat_el.get_text(strip=True).replace("TL", "").replace(".", "").strip() if fiyat_el else "0"
+
+                        # TEMEL ÖZELLİKLER — liste kartından
+                        oda_el = listing.select_one('.houseRoomCount')
+                        oda = oda_el.get_text(strip=True).replace("\n", "").strip() if oda_el else "-"
+
+                        m2_el = listing.select_one('.squareMeter')
+                        m2 = m2_el.get_text(strip=True).replace("m²", "").strip() if m2_el else "-"
+
+                        yas_el = listing.select_one('.buildingAge')
+                        yas = yas_el.get_text(strip=True).replace(" Yaşında", "").strip() if yas_el else "-"
+
+                        kat_el = listing.select_one('.floortype')
+                        bulundugu_kat = kat_el.get_text(strip=True) if kat_el else "-"
+
+                        firma_el = listing.select_one('.listing-card--owner-info__firm-name')
+                        firma = firma_el.get_text(strip=True) if firma_el else "-"
+
+                        # LİSTE SAYFASI KONUM (yedek)
+                        adres_el = listing.select_one('address')
+                        konum_liste = adres_el.get_text(strip=True) if adres_el else "-"
+                        konum_parts = [p.strip() for p in konum_liste.replace(' / ', '/').split('/') if p.strip()]
+                        ilce_yedek = konum_parts[1] if len(konum_parts) >= 2 else (konum_parts[0] if konum_parts else "-")
+                        mahalle_yedek = konum_parts[2] if len(konum_parts) >= 3 else "-"
+
+                        # DETAY SAYFASINDAN VERİ ÇEK
+                        detay = {
+                            'kat_sayisi': '-', 'ilan_tarihi': '-',
+                            'ilce': '-', 'mahalle': '-', 'ilan_no_detay': '-'
+                        }
+                        if url != "-":
+                            detay = get_detay_verileri(context, url)
+
+                        # Detaydan gelen ilan_no daha güvenilir olabilir
+                        if ilan_no == "-" and detay['ilan_no_detay'] != '-':
+                            ilan_no = detay['ilan_no_detay']
+
+                        final_ilce = detay['ilce'] if detay['ilce'] != '-' else ilce_yedek
+                        final_mahalle = detay['mahalle'] if detay['mahalle'] != '-' else mahalle_yedek
+
+                        print(f"    [{index+1}/{len(listings)}] {ilan_no} | Kat:{detay['kat_sayisi']} | Tarih:{detay['ilan_tarihi']} | {final_ilce} / {final_mahalle}")
 
                         final_data.append({
                             'ilan_no': ilan_no,
-                            'baslik': f"{konut_tipi} - {final_konum}",
+                            'kategori': kategori,
                             'fiyat': fiyat,
-                            'konut_tipi': konut_tipi,
                             'oda_sayisi': oda,
                             'm2': m2,
                             'bulundugu_kat': bulundugu_kat,
                             'bina_yasi': yas,
-                            'isinma_tipi': "Kombi (Doğalgaz)", 
+                            'isinma_tipi': "Kombi (Doğalgaz)",
                             'tapu_durumu': "Kat Mülkiyeti",
                             'banyo_sayisi': "1",
-                            'kat_sayisi': detay_verileri['kat_sayisi'],
+                            'kat_sayisi': detay['kat_sayisi'],
                             'krediye_uygun': "Evet",
                             'esya_durumu': "Boş",
                             'firma_adi': firma,
-                            'ilan_tarihi': detay_verileri['ilan_tarihi'],
-                            'konum': final_konum, # Detaylı konum buraya yazılıyor
+                            'ilan_tarihi': detay['ilan_tarihi'],
+                            'ilce': final_ilce,
+                            'mahalle': final_mahalle,
                             'url': url
                         })
-                        
+
                         time.sleep(3)
 
-                    except Exception as inner_e: 
+                    except Exception as inner_e:
                         print(f"    İlan işleme hatası: {inner_e}")
                         continue
 
                 if final_data:
                     save_to_csv(final_data)
                     print(f"Sayfa {page_num}: {len(final_data)} ilan diske yazıldı.")
-                
+
             except Exception as e:
                 print(f"Sayfa hatası: {e}")
                 continue
