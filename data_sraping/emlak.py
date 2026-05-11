@@ -100,18 +100,10 @@ def main():
             print("HATA: Chrome portu (9222) açık değil!")
             return
 
-        for page_num in range(1, 300):
-            target_url = f"https://www.hepsiemlak.com/ankara-kiralik?page={page_num}"
-
-            if 'kiralik' in target_url:
-                kategori = "Kiralık"
-            elif 'satilik' in target_url:
-                kategori = "Satılık"
-            else:
-                kategori = "-"
-
-            print(f"\n>>> Sayfa {page_num} işleniyor... [{kategori}]")
-
+        for page_num in range(297, 750): 
+            target_url = f"https://www.hepsiemlak.com/ankara-satilik?page={page_num}"
+            print(f"\n>>> Sayfa {page_num} işleniyor...")
+            
             try:
                 page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
                 time.sleep(5)
@@ -125,21 +117,14 @@ def main():
                 final_data = []
                 for index, listing in enumerate(listings):
                     try:
-                        # URL — doğru selector: a.listingView__card-link
-                        link = listing.select_one('a.listingView__card-link')
-                        if link and link.get('href'):
-                            href = link['href']
-                            url = href if href.startswith('http') else "https://www.hepsiemlak.com" + href
-                        else:
-                            url = "-"
-
-                        # İLAN NO — article etiketinin id attribute'u (örn: "9228-43")
-                        article = listing.find('article')
-                        ilan_no = article.get('id', '-') if article else "-"
-
-                        # FIYAT
-                        fiyat_el = listing.select_one('.list-view-price')
-                        fiyat = fiyat_el.get_text(strip=True).replace("TL", "").replace(".", "").strip() if fiyat_el else "0"
+                        # Temel Link ve ID
+                        link_tag = listing.select_one('a.card-link')
+                        url = "https://www.hepsiemlak.com" + link_tag['href'] if link_tag else "-"
+                        ilan_no = url.split('/')[-1] if '/' in url else "-"
+                        
+                        # Fiyat
+                        fiyat_ham = listing.select_one('.list-view-price').get_text(strip=True) if listing.select_one('.list-view-price') else "0"
+                        fiyat = fiyat_ham.replace("TL", "").replace(".", "").strip()
 
                         # TEMEL ÖZELLİKLER — liste kartından
                         oda_el = listing.select_one('.houseRoomCount')
