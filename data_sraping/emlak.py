@@ -100,10 +100,25 @@ def main():
             print("HATA: Chrome portu (9222) açık değil!")
             return
 
+<<<<<<< HEAD
+        for page_num in range(13, 300):
+            target_url = f"https://www.hepsiemlak.com/ankara-kiralik?page={page_num}"
+
+            if 'kiralik' in target_url:
+                kategori = "Kiralık"
+            elif 'satilik' in target_url:
+                kategori = "Satılık"
+            else:
+                kategori = "-"
+
+            print(f"\n>>> Sayfa {page_num} işleniyor... [{kategori}]")
+
+=======
         for page_num in range(297, 750): 
-            target_url = f"https://www.hepsiemlak.com/ankara-satilik?page={page_num}"
+            target_url = f"https://www.istediginizsiteninurlsi.com"
             print(f"\n>>> Sayfa {page_num} işleniyor...")
             
+>>>>>>> b0d38555b550d516800cf8be486d691d1264d8b6
             try:
                 page.goto(target_url, wait_until="domcontentloaded", timeout=60000)
                 time.sleep(5)
@@ -117,14 +132,54 @@ def main():
                 final_data = []
                 for index, listing in enumerate(listings):
                     try:
+<<<<<<< HEAD
+                        # URL — doğru selector: a.listingView__card-link
+                        link = listing.select_one('a.listingView__card-link')
+                        if link and link.get('href'):
+                            href = link['href']
+                            url = href if href.startswith('http') else "https://www.hepsiemlak.com" + href
+=======
                         # Temel Link ve ID
                         link_tag = listing.select_one('a.card-link')
-                        url = "https://www.hepsiemlak.com" + link_tag['href'] if link_tag else "-"
+                        url = "https://www.example.com" + link_tag['href'] if link_tag else "-"
                         ilan_no = url.split('/')[-1] if '/' in url else "-"
                         
                         # Fiyat
                         fiyat_ham = listing.select_one('.list-view-price').get_text(strip=True) if listing.select_one('.list-view-price') else "0"
                         fiyat = fiyat_ham.replace("TL", "").replace(".", "").strip()
+
+                        # Liste sayfasından yedek veriler
+                        oda = listing.select_one('.houseRoomCount').get_text(strip=True).replace("\n", "").strip() if listing.select_one('.houseRoomCount') else "-"
+                        m2 = listing.select_one('.squareMeter').get_text(strip=True).replace("m²", "").strip() if listing.select_one('.squareMeter') else "-"
+                        yas = listing.select_one('.buildingAge').get_text(strip=True).replace(" Yaşında", "").strip() if listing.select_one('.buildingAge') else "-"
+                        bulundugu_kat = listing.select_one('.floortype').get_text(strip=True) if listing.select_one('.floortype') else "-"
+                        firma = listing.select_one('.listing-card--owner-info__firm-name').get_text(strip=True) if listing.select_one('.listing-card--owner-info__firm-name') else "-"
+                        konut_tipi = listing.select_one('.left').get_text(strip=True) if listing.select_one('.left') else "Daire"
+                        
+                        # Liste sayfasındaki konum (Yedek olarak tutuyoruz)
+                        konum_liste = listing.select_one('address').get_text(strip=True) if listing.select_one('address') else "-"
+
+                        # DETAY SAYFASINA GİDİŞ VE ORADAN VERİ ÇEKME ---
+                        detay_verileri = {'kat_sayisi': '-', 'ilan_tarihi': '-', 'konum': '-'}
+                        
+                        if url != "-":
+                            detay_verileri = get_detay_verileri(context, url)
+                            
+                            # Eğer detaydan konum geldiyse onu kullan, gelmediyse listedekini kullan
+                            final_konum = detay_verileri['konum'] if detay_verileri['konum'] != '-' else konum_liste
+                            
+                            print(f"    [{index+1}/{len(listings)}] {ilan_no} | Kat:{detay_verileri['kat_sayisi']} | Tarih:{detay_verileri['ilan_tarihi']} | Yer:{final_konum}")
+>>>>>>> b0d38555b550d516800cf8be486d691d1264d8b6
+                        else:
+                            url = "-"
+
+                        # İLAN NO — article etiketinin id attribute'u (örn: "9228-43")
+                        article = listing.find('article')
+                        ilan_no = article.get('id', '-') if article else "-"
+
+                        # FIYAT
+                        fiyat_el = listing.select_one('.list-view-price')
+                        fiyat = fiyat_el.get_text(strip=True).replace("TL", "").replace(".", "").strip() if fiyat_el else "0"
 
                         # TEMEL ÖZELLİKLER — liste kartından
                         oda_el = listing.select_one('.houseRoomCount')
